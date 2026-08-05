@@ -83,7 +83,7 @@ def buscar_dvd_release(titulo, ano):
         if any(b in nome_formato for b in TERMOS_BLOQUEADOS):
             continue
         
-        if any(p.lower() in nome_formato.lower() for p.lower() in FORMATOS_PERMITIDOS):
+        if any(p.lower() in nome_formato.lower() for p in FORMATOS_PERMITIDOS):
             data_el = caixa.find(text=re.compile(r'Release Date', re.I))
             if data_el:
                 parent = data_el.parent
