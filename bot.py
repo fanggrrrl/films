@@ -7,7 +7,7 @@ from datetime import datetime
 from dateutil import parser
 
 # ================= CONFIGURAÇÕES =================
-LETTERBOXD_USERNAME = "fang_grrrl"  # <-- ALTERE APENAS AQUI PARA SEU NOME DE USUÁRIO DO LETTERBOXD
+LETTERBOXD_USERNAME = "fang_grrrl"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 HISTORICO_FILE = "historico.json"
 
@@ -141,11 +141,9 @@ def buscar_dvd_release(titulo, ano):
         return None
 
 def main():
-    # TESTE DE CONEXÃO: Envia uma mensagem de confirmação no Discord
-    enviar_discord(" Hello! O bot está conectado e funcionando perfeitamente no Discord.")
-    
     historico = carregar_historico()
-    primeira_execucao = len(historico) == 0
+    # Força envio das notificações para testar
+    primeira_execucao = False
     
     filmes = obter_watchlist()
     print(f"Total de filmes encontrados na Watchlist: {len(filmes)}")
