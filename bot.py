@@ -123,6 +123,9 @@ def buscar_dvd_release(titulo, ano):
     }
 
 def main():
+    def main():
+    enviar_discord("Hello! O bot está conectado e funcionando perfeitamente no Discord.")
+    historico = carregar_historico()
     historico = carregar_historico()
     primeira_execucao = len(historico) == 0
     
