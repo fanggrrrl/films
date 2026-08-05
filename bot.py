@@ -7,7 +7,7 @@ from datetime import datetime
 from dateutil import parser
 
 # ================= CONFIGURAÇÕES =================
-LETTERBOXD_USERNAME = "fang_grrrl"  # <-- COLOQUE SEU USUÁRIO DO LETTERBOXD AQUI
+LETTERBOXD_USERNAME = "fang_grrrl"  # <-- ALTERE APENAS AQUI PARA SEU NOME DE USUÁRIO DO LETTERBOXD
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 HISTORICO_FILE = "historico.json"
 
@@ -16,13 +16,22 @@ FORMATOS_PERMITIDOS = ["Digital HD", "Blu-ray", "Blu-ray + Digital"]
 TERMOS_BLOQUEADOS = ["4K", "DVD"]
 
 def enviar_discord(mensagem):
+    if not DISCORD_WEBHOOK_URL:
+        print("Aviso: URL do Webhook do Discord não configurada.")
+        return
     payload = {"content": mensagem}
-    requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    except Exception as e:
+        print(f"Erro ao enviar mensagem para o Discord: {e}")
 
 def carregar_historico():
     if os.path.exists(HISTORICO_FILE):
-        with open(HISTORICO_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(HISTORICO_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
 
 def salvar_historico(historico):
@@ -37,21 +46,26 @@ def obter_watchlist():
     filmes = []
     url = f"https://letterboxd.com/{LETTERBOXD_USERNAME}/watchlist/"
     while url:
-        resp = requests.get(url, headers=HEADERS)
-        if resp.status_code != 200:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            if resp.status_code != 200:
+                print(f"Erro ao acessar Watchlist ({resp.status_code}): {url}")
+                break
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            itens = soup.select('li.poster-container')
+            for item in itens:
+                img = item.find('img')
+                if img and img.has_attr('alt'):
+                    titulo = img['alt']
+                    div = item.find('div', class_='film-poster')
+                    ano = div.get('data-film-release-year', '') if div else ''
+                    filmes.append({'titulo': titulo, 'ano': ano})
+            
+            proxima = soup.select_one('a.next')
+            url = f"https://letterboxd.com{proxima['href']}" if proxima else None
+        except Exception as e:
+            print(f"Erro na raspagem do Letterboxd: {e}")
             break
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        itens = soup.select('li.poster-container')
-        for item in itens:
-            img = item.find('img')
-            if img and img.has_attr('alt'):
-                titulo = img['alt']
-                div = item.find('div', class_='film-poster')
-                ano = div.get('data-film-release-year', '') if div else ''
-                filmes.append({'titulo': titulo, 'ano': ano})
-        
-        proxima = soup.select_one('a.next')
-        url = f"https://letterboxd.com{proxima['href']}" if proxima else None
     return filmes
 
 def buscar_dvd_release(titulo, ano):
@@ -59,77 +73,82 @@ def buscar_dvd_release(titulo, ano):
     slug = re.sub(r'-+', '-', slug).strip('-')
     url = f"https://www.dvdreleasedates.com/movies/{slug}/"
     
-    resp = requests.get(url, headers=HEADERS)
-    if resp.status_code != 200:
-        return None
-    
-    soup = BeautifulSoup(resp.text, 'html.parser')
-    
-    header_h1 = soup.find('h1')
-    if header_h1 and ano:
-        if ano not in header_h1.text:
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        if resp.status_code != 200:
             return None
-
-    caixas = soup.find_all('td', class_='mod')
-    opcoes_encontradas = []
-
-    for caixa in caixas:
-        header = caixa.find('h3') or caixa.find('h2') or caixa.find('b')
-        if not header:
-            continue
         
-        nome_formato = header.text.strip()
+        soup = BeautifulSoup(resp.text, 'html.parser')
         
-        if any(b in nome_formato for b in TERMOS_BLOQUEADOS):
-            continue
+        header_h1 = soup.find('h1')
+        if header_h1 and ano:
+            if ano not in header_h1.text:
+                return None
+
+        caixas = soup.find_all('td', class_='mod')
+        opcoes_encontradas = []
+
+        for caixa in caixas:
+            header = caixa.find('h3') or caixa.find('h2') or caixa.find('b')
+            if not header:
+                continue
+            
+            nome_formato = header.text.strip()
+            
+            if any(b in nome_formato for b in TERMOS_BLOQUEADOS):
+                continue
+            
+            if any(p.lower() in nome_formato.lower() for p in FORMATOS_PERMITIDOS):
+                data_el = caixa.find(string=re.compile(r'Release Date', re.I))
+                if data_el:
+                    parent = data_el.parent
+                    texto_completo = parent.text if parent else ""
+                    
+                    if "not announced" in texto_completo.lower():
+                        continue
+                    
+                    match = re.search(r'Release Date\s+([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{1,2}\s+[A-Za-z]+)', texto_completo, re.I)
+                    if match:
+                        str_data = match.group(1).strip()
+                        try:
+                            dt_obj = parser.parse(str_data)
+                            is_digital = "digital" in nome_formato.lower()
+                            opcoes_encontradas.append({
+                                'formato': "digital" if is_digital else "Blu-ray",
+                                'data_str': dt_obj.strftime('%d %B'),
+                                'data_obj': dt_obj
+                            })
+                        except:
+                            pass
+
+        if not opcoes_encontradas:
+            return {'status': 'not announced'}
+
+        opcoes_encontradas.sort(key=lambda x: (x['data_obj'], 0 if x['formato'] == 'digital' else 1))
+        melhor_opcao = opcoes_encontradas[0]
         
-        if any(p.lower() in nome_formato.lower() for p in FORMATOS_PERMITIDOS):
-            data_el = caixa.find(text=re.compile(r'Release Date', re.I))
-            if data_el:
-                parent = data_el.parent
-                texto_completo = parent.text if parent else ""
-                
-                if "not announced" in texto_completo.lower():
-                    continue
-                
-                match = re.search(r'Release Date\s+([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{1,2}\s+[A-Za-z]+)', texto_completo, re.I)
-                if match:
-                    str_data = match.group(1).strip()
-                    try:
-                        dt_obj = parser.parse(str_data)
-                        is_digital = "digital" in nome_formato.lower()
-                        opcoes_encontradas.append({
-                            'formato': "digital" if is_digital else "Blu-ray",
-                            'data_str': dt_obj.strftime('%d %B'),
-                            'data_obj': dt_obj
-                        })
-                    except:
-                        pass
-
-    if not opcoes_encontradas:
-        return {'status': 'not announced'}
-
-    opcoes_encontradas.sort(key=lambda x: (x['data_obj'], 0 if x['formato'] == 'digital' else 1))
-    melhor_opcao = opcoes_encontradas[0]
-    
-    hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    ja_lancou = melhor_opcao['data_obj'] <= hoje
-    
-    return {
-        'status': 'announced',
-        'formato': melhor_opcao['formato'],
-        'data_str': melhor_opcao['data_str'],
-        'lancou': ja_lancou
-    }
+        hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        ja_lancou = melhor_opcao['data_obj'] <= hoje
+        
+        return {
+            'status': 'announced',
+            'formato': melhor_opcao['formato'],
+            'data_str': melhor_opcao['data_str'],
+            'lancou': ja_lancou
+        }
+    except Exception as e:
+        print(f"Erro ao buscar {titulo} no DVD Release: {e}")
+        return None
 
 def main():
-    def main():
-    enviar_discord("Hello! O bot está conectado e funcionando perfeitamente no Discord.")
-    historico = carregar_historico()
+    # TESTE DE CONEXÃO: Envia uma mensagem de confirmação no Discord
+    enviar_discord(" Hello! O bot está conectado e funcionando perfeitamente no Discord.")
+    
     historico = carregar_historico()
     primeira_execucao = len(historico) == 0
     
     filmes = obter_watchlist()
+    print(f"Total de filmes encontrados na Watchlist: {len(filmes)}")
     
     for filme in filmes:
         chave = f"{normalizar(filme['titulo'])}_{filme['ano']}"
