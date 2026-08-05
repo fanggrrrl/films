@@ -21,7 +21,8 @@ def enviar_discord(mensagem):
         return
     payload = {"content": mensagem}
     try:
-        requests.post(DISCORD_WEBHOOK_URL, json=payload)
+        res = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+        print(f"Status do envio Webhook: {res.status_code}")
     except Exception as e:
         print(f"Erro ao enviar mensagem para o Discord: {e}")
 
@@ -98,7 +99,7 @@ def buscar_dvd_release(titulo, ano):
         opcoes_encontradas = []
 
         for caixa in caixas:
-            texto_caixa = caixa.get_text(separator=' ', strip=True)
+            texto_caixa = " ".join(caixa.get_text(separator=' ').split())
             
             formato_match = None
             for fmt in FORMATOS_PERMITIDOS:
@@ -109,19 +110,20 @@ def buscar_dvd_release(titulo, ano):
             if not formato_match:
                 continue
 
-            if any(b.lower() in texto_caixa.lower() for b in TERMOS_BLOQUEADOS if b.lower() not in formato_match.lower()):
+            # Ignora 4K ou DVD simples
+            if "4k" in texto_caixa.lower() and "digital" not in formato_match.lower() and "blu-ray" not in formato_match.lower():
                 continue
 
             if "not announced" in texto_caixa.lower():
                 continue
 
-            # IGNORA DATAS ESTIMADAS: Só aceita a data se NÃO tiver 'est' após o Release Date
-            if re.search(r'Release Date\s+est\b', texto_caixa, re.I):
+            # Ignora datas estimadas que contêm 'est'
+            if re.search(r'release date\s+est\b', texto_caixa, re.I):
                 continue
 
-            # Captura apenas datas reais/confirmadas
+            # Captura a data oficial
             match = re.search(
-                r'Release Date\s+([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{1,2}\s+[A-Za-z]+\s+\d{4}|[A-Za-z]+\s+\d{4})',
+                r'(?:Release Date|Date)\s*:?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{1,2}\s+[A-Za-z]+\s+\d{4}|[A-Za-z]+\s+\d{4})',
                 texto_caixa,
                 re.I
             )
@@ -160,7 +162,6 @@ def buscar_dvd_release(titulo, ano):
 
 def main():
     historico = carregar_historico()
-    primeira_execucao = False
     
     filmes = obter_watchlist()
     print(f"Total de filmes na Watchlist: {len(filmes)}")
@@ -173,16 +174,12 @@ def main():
             continue
             
         estado_anterior = historico.get(chave, {})
-        
-        if primeira_execucao:
-            historico[chave] = dados_site
-            continue
-        
-        data_mudou = estado_anterior.get('data_str') != dados_site['data_str']
-        status_anterior = estado_anterior.get('status', 'not announced')
+        data_anterior = estado_anterior.get('data_str')
+        status_anterior = estado_anterior.get('status')
         ja_notificado_lancamento = estado_anterior.get('notificado_lancamento', False)
         
-        if status_anterior == 'not announced' or data_mudou:
+        # Dispara se for um filme novo/desconhecido no histórico OU se a data mudou
+        if status_anterior != 'announced' or data_anterior != dados_site['data_str']:
             msg = f"**{filme['titulo']}** will be available on {dados_site['formato']} on {dados_site['data_str']}."
             enviar_discord(msg)
             dados_site['notificado_lancamento'] = False
